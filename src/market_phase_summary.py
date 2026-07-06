@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
-from src.core.trading_calendar import MarketPhase
+from src.core.trading_calendar import MarketPhase, build_market_phase_context, get_market_for_stock
 
 
 MARKET_PHASE_SUMMARY_KEY = "market_phase_summary"
@@ -33,6 +34,8 @@ _SENSITIVE_MARKERS = (
     "webhook",
 )
 _INTRADAY_BUCKET_PHASES = {"intraday", "lunch_break", "closing_auction"}
+_SUPPORTED_MANUAL_ANALYSIS_PHASES = {"premarket", "intraday", "postmarket"}
+_SUPPORTED_ANALYSIS_INTENTS = {"auto", *_SUPPORTED_MANUAL_ANALYSIS_PHASES}
 _PUBLIC_SOURCE_LABELS_ZH = {
     "alert_trigger_market_context": "告警触发上下文",
     "analysis_history_snapshot": "最近分析快照",
@@ -44,6 +47,40 @@ _PUBLIC_SOURCE_LABELS_EN = {
     "analysis_history_snapshot": "recent analysis snapshot",
     "evaluator_snapshot": "evaluator snapshot",
     "legacy_text": "legacy text",
+}
+_MARKET_STATUS_PREFIX = {
+    "zh": "市场状态",
+    "en": "Market status",
+}
+_MARKET_LABELS_ZH = {
+    "cn": "A股",
+    "hk": "港股",
+    "us": "美股",
+    "tw": "台股",
+}
+_MARKET_LABELS_EN = {
+    "cn": "A-shares",
+    "hk": "Hong Kong",
+    "us": "US",
+    "tw": "Taiwan",
+}
+_PHASE_LABELS_ZH = {
+    "premarket": "盘前",
+    "intraday": "盘中",
+    "lunch_break": "午间休市",
+    "closing_auction": "临近收盘",
+    "postmarket": "盘后",
+    "non_trading": "非交易日",
+    "unknown": "阶段未知",
+}
+_PHASE_LABELS_EN = {
+    "premarket": "Pre-market",
+    "intraday": "Intraday",
+    "lunch_break": "Lunch break",
+    "closing_auction": "Near close",
+    "postmarket": "Post-market",
+    "non_trading": "Non-trading",
+    "unknown": "Unknown phase",
 }
 
 
@@ -79,6 +116,56 @@ def extract_market_phase_summary(context_snapshot: Any) -> Optional[Dict[str, An
     return render_market_phase_summary(summary)
 
 
+def _parse_phase_local_time(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def rebuild_market_phase_summary_for_stock_code(
+    stock_code: Any,
+    context_snapshot: Any,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild phase summary with derived fields for JP/KR display codes.
+
+    Legacy CN snapshots on JP/KR stock records can retain CN-local values. This
+    helper recomputes those derived fields using the target market context while
+    preserving non-derived source fields when possible.
+    """
+    summary = extract_market_phase_summary(context_snapshot)
+    if not isinstance(summary, Mapping):
+        return None
+
+    market = get_market_for_stock(str(stock_code or "").strip())
+    if market not in {"jp", "kr", "tw"}:
+        return dict(summary)
+
+    phase = str(summary.get("phase", "")).strip()
+    analysis_phase = phase if phase in _SUPPORTED_MANUAL_ANALYSIS_PHASES else "auto"
+    analysis_intent = str(summary.get("analysis_intent") or "auto").strip()
+    if analysis_intent not in _SUPPORTED_ANALYSIS_INTENTS:
+        analysis_intent = "auto"
+
+    rebuilt = build_market_phase_context(
+        market=market,
+        current_time=_parse_phase_local_time(summary.get("market_local_time")),
+        trigger_source=str(summary.get("trigger_source") or "system").strip() or "system",
+        analysis_intent=analysis_intent,
+        analysis_phase=analysis_phase,
+    ).to_dict()
+
+    rebuilt.setdefault("warnings", list(summary.get("warnings") or []))
+    if not rebuilt.get("warnings"):
+        rebuilt["warnings"] = list(summary.get("warnings") or [])
+
+    return rebuilt
+
+
 def normalize_analysis_phase_bucket(value: Any) -> str:
     """Fold detailed phase labels into the public backtest/statistics buckets."""
     phase = _safe_text(value)
@@ -103,7 +190,8 @@ def format_public_phase_pack_excerpt(
     overview = _as_mapping(analysis_context_pack_overview)
     if not phase_summary and not overview:
         return ""
-    lang = "en" if str(report_language or "").lower().startswith("en") else "zh"
+    # Korean reuses the English structural summary; output language is set by directive.
+    lang = "en" if str(report_language or "").lower().startswith(("en", "ko")) else "zh"
     source_label = _source_label(source, lang)
 
     lines: List[str] = []
@@ -144,6 +232,35 @@ def format_public_phase_pack_excerpt(
             lines.append(f"- {'limitation' if lang == 'en' else '限制'}: {item}")
 
     return "\n".join(lines)
+
+
+def format_public_market_status_line(
+    market_phase_summary: Any,
+    *,
+    report_language: str = "zh",
+) -> str:
+    """Format one compact market/phase line for aggregate reports."""
+    phase_summary = _as_mapping(market_phase_summary)
+    if not phase_summary:
+        return ""
+    phase = _safe_phase(phase_summary.get("phase"))
+    if phase is None:
+        return ""
+
+    # Korean reuses the English structural summary; output language is set by directive.
+    lang = "en" if str(report_language or "").lower().startswith(("en", "ko")) else "zh"
+    phase_labels = _PHASE_LABELS_EN if lang == "en" else _PHASE_LABELS_ZH
+    market_labels = _MARKET_LABELS_EN if lang == "en" else _MARKET_LABELS_ZH
+    phase_label = phase_labels.get(phase, phase)
+    market = _safe_text(phase_summary.get("market"))
+    market_key = market.lower()
+    if market_key:
+        market_label = market_labels.get(market_key, market.upper() if lang == "en" else market)
+        value = f"{market_label} · {phase_label}"
+    else:
+        value = phase_label
+    separator = ": " if lang == "en" else "："
+    return f"{_MARKET_STATUS_PREFIX[lang]}{separator}{value}"
 
 
 def _as_mapping(value: Any) -> Optional[Mapping[str, Any]]:

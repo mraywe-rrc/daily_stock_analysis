@@ -52,6 +52,14 @@ const BLOCK_LABELS: Record<ReportLanguage, Record<string, string>> = {
     fundamentals: 'fundamentals',
     chip: 'chip',
   },
+  ko: {
+    quote: '시세',
+    daily_bars: '일봉',
+    technical: '기술',
+    news: '뉴스',
+    fundamentals: '펀더멘털',
+    chip: '매물대',
+  },
 };
 
 const TEXT = {
@@ -62,6 +70,8 @@ const TEXT = {
     source: '来源',
     warnings: '告警',
     missingReasons: '缺失原因',
+    inputScope: '本次分析输入',
+    evidenceScope: '仅代表进入本次 LLM 的输入，不等同于数据源运行成功',
     qualityScore: '质量分',
     limitations: '数据限制',
     newsResultCount: '新闻结果数',
@@ -90,6 +100,8 @@ const TEXT = {
     source: 'Source',
     warnings: 'Warnings',
     missingReasons: 'Missing Reasons',
+    inputScope: 'Analysis Input',
+    evidenceScope: 'Shows inputs included in this LLM run, not provider run success',
     qualityScore: 'Quality',
     limitations: 'Data Limitations',
     newsResultCount: 'News Results',
@@ -111,7 +123,70 @@ const TEXT = {
       fetch_failed: 'Fetch failed',
     },
   },
+  ko: {
+    eyebrow: '데이터 컨텍스트',
+    title: '입력 데이터 블록',
+    counts: '상태 카운트',
+    source: '출처',
+    warnings: '경고',
+    missingReasons: '누락 사유',
+    inputScope: '이번 분석 입력',
+    evidenceScope: '이번 LLM 입력에 포함된 항목만 표시하며, 데이터 소스 실행 성공과는 다릅니다',
+    qualityScore: '품질 점수',
+    limitations: '데이터 한계',
+    newsResultCount: '뉴스 결과 수',
+    triggerSource: '트리거',
+    qualityLevel: {
+      good: '양호',
+      usable: '사용 가능',
+      limited: '제한적',
+      poor: '미흡',
+    },
+    status: {
+      available: '사용 가능',
+      missing: '누락',
+      not_supported: '미지원',
+      fallback: '강등',
+      stale: '만료',
+      estimated: '추정',
+      partial: '부분 사용',
+      fetch_failed: '수집 실패',
+    },
+  },
 } as const;
+
+const MISSING_REASON_LABELS: Record<ReportLanguage, Record<string, string>> = {
+  zh: {
+    daily_bars_missing: '未进入分析输入',
+    news_context_missing: '未进入分析输入',
+    realtime_quote_missing: '未进入分析输入',
+    trend_result_missing: '未进入分析输入',
+    fundamental_context_missing: '未进入分析输入',
+    chip_distribution_missing: '未进入分析输入',
+    today_missing: '今日数据未进入分析输入',
+    yesterday_missing: '昨日数据未进入分析输入',
+  },
+  en: {
+    daily_bars_missing: 'Not included in analysis input',
+    news_context_missing: 'Not included in analysis input',
+    realtime_quote_missing: 'Not included in analysis input',
+    trend_result_missing: 'Not included in analysis input',
+    fundamental_context_missing: 'Not included in analysis input',
+    chip_distribution_missing: 'Not included in analysis input',
+    today_missing: 'Today data not included in analysis input',
+    yesterday_missing: 'Yesterday data not included in analysis input',
+  },
+  ko: {
+    daily_bars_missing: '분석 입력에 포함되지 않음',
+    news_context_missing: '분석 입력에 포함되지 않음',
+    realtime_quote_missing: '분석 입력에 포함되지 않음',
+    trend_result_missing: '분석 입력에 포함되지 않음',
+    fundamental_context_missing: '분석 입력에 포함되지 않음',
+    chip_distribution_missing: '분석 입력에 포함되지 않음',
+    today_missing: '당일 데이터가 분석 입력에 포함되지 않음',
+    yesterday_missing: '전일 데이터가 분석 입력에 포함되지 않음',
+  },
+};
 
 const STATUS_ORDER: AnalysisContextPackBlockStatus[] = [
   'available',
@@ -140,7 +215,7 @@ const getCount = (
 const formatLimitation = (
   value: string,
   language: ReportLanguage,
-  text: typeof TEXT.zh | typeof TEXT.en,
+  text: (typeof TEXT)[ReportLanguage],
 ): string => {
   const [rawKey, ...statusParts] = value.split(':');
   if (!rawKey || statusParts.length === 0) {
@@ -156,6 +231,11 @@ const formatLimitation = (
   const label = BLOCK_LABELS[language][key] || key;
   const statusLabel = (text.status as Record<string, string>)[status] || status;
   return language === 'zh' ? `${label}：${statusLabel}` : `${label}: ${statusLabel}`;
+};
+
+const formatMissingReason = (reason: string, language: ReportLanguage): string => {
+  const label = MISSING_REASON_LABELS[language][reason];
+  return label ? `${label} (${reason})` : reason;
 };
 
 export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
@@ -200,6 +280,9 @@ export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
               <span className="mt-0.5 block truncate text-base font-semibold text-foreground">
                 {text.title}
               </span>
+              <span className="mt-1 block text-xs leading-5 text-muted-text">
+                {text.evidenceScope}
+              </span>
             </span>
           </div>
           <span className="flex min-w-0 flex-wrap items-center justify-end gap-2">
@@ -223,6 +306,9 @@ export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
                 {text.triggerSource}: {triggerSource}
               </span>
             ) : null}
+            <span className="home-accent-chip px-2 py-0.5 text-xs text-muted-text">
+              {text.inputScope}
+            </span>
             <ChevronDown className="h-4 w-4 shrink-0 text-muted-text transition-transform group-open:rotate-180" aria-hidden="true" />
           </span>
         </summary>
@@ -248,6 +334,9 @@ export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
                     {item}
                   </span>
                 ))}
+                <span className="home-accent-chip px-2 py-0.5">
+                  {text.inputScope}
+                </span>
               </div>
             ) : undefined}
           />
@@ -308,7 +397,9 @@ export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
                   ) : null}
                   {block.missingReasons?.length ? (
                     <p className="mt-2 text-xs leading-5 text-muted-text">
-                      {text.missingReasons}: {block.missingReasons.join(', ')}
+                      {text.missingReasons}: {block.missingReasons
+                        .map((reason) => formatMissingReason(reason, reportLanguage))
+                        .join(', ')}
                     </p>
                   ) : null}
                 </div>
@@ -328,6 +419,9 @@ export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
                   {item}
                 </span>
               ))}
+              <span className="home-accent-chip px-2 py-0.5">
+                {text.inputScope}
+              </span>
             </div>
           ) : null}
         </div>

@@ -59,6 +59,16 @@ def _make_renderer_config(show_llm_model: bool = True) -> MagicMock:
     return config
 
 
+def _with_decision_signal_summary(result: AnalysisResult) -> AnalysisResult:
+    result.decision_signal_summary = {
+        "action": "sell",
+        "action_label": "卖出",
+        "horizon": "1d",
+        "reason": "技术面走弱",
+    }
+    return result
+
+
 class TestReportRenderer(unittest.TestCase):
     """Report renderer tests."""
 
@@ -79,6 +89,23 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("核心结论", out)
         self.assertIn("作战计划", out)
         self.assertNotIn("盘中决策护栏", out)
+
+    def test_render_markdown_keeps_decision_signal_out_of_summary(self) -> None:
+        """Markdown summary stays compact while full details keep DecisionSignal excerpts."""
+        r = _with_decision_signal_summary(_make_result())
+
+        summary_out = render("markdown", [r], summary_only=True)
+        self.assertIsNotNone(summary_out)
+        self.assertNotIn("AI 决策信号", summary_out)
+
+        full_out = render("markdown", [r], summary_only=False)
+        self.assertIsNotNone(full_out)
+        summary_section, detail_section = full_out.split("---", 1)
+        self.assertNotIn("AI 决策信号", summary_section)
+        self.assertIn("AI 决策信号", detail_section)
+        self.assertIn("动作: 卖出", detail_section)
+        self.assertIn("周期: 1d", detail_section)
+        self.assertIn("理由: 技术面走弱", detail_section)
 
     def test_render_markdown_phase_decision_section(self) -> None:
         """Markdown renders phase_decision when present."""
@@ -137,6 +164,21 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertIn("贵州茅台", out)
 
+    def test_render_wechat_keeps_decision_signal_out_of_summary(self) -> None:
+        """Wechat summary-only stays compact while full details keep DecisionSignal excerpts."""
+        r = _with_decision_signal_summary(_make_result())
+
+        summary_out = render("wechat", [r], summary_only=True)
+        self.assertIsNotNone(summary_out)
+        self.assertNotIn("AI 决策信号", summary_out)
+
+        full_out = render("wechat", [r], summary_only=False)
+        self.assertIsNotNone(full_out)
+        self.assertIn("AI 决策信号", full_out)
+        self.assertIn("动作: 卖出", full_out)
+        self.assertIn("周期: 1d", full_out)
+        self.assertIn("理由: 技术面走弱", full_out)
+
     def test_render_brief(self) -> None:
         """Brief platform renders 3-5 sentence summary."""
         r = _make_result()
@@ -144,6 +186,14 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertIn("决策简报", out)
         self.assertIn("贵州茅台", out)
+
+    def test_render_brief_omits_decision_signal_excerpt(self) -> None:
+        r = _with_decision_signal_summary(_make_result())
+
+        out = render("brief", [r])
+
+        self.assertIsNotNone(out)
+        self.assertNotIn("AI 决策信号", out)
 
     def test_render_brief_respects_model_visibility_toggle(self) -> None:
         r = _make_result(model_used="gemini/gemini-2.5-flash")
@@ -159,7 +209,7 @@ class TestReportRenderer(unittest.TestCase):
         self.assertNotIn("分析模型", hidden)
         self.assertNotIn("gemini/gemini-2.5-flash", hidden)
 
-    def test_render_templates_include_public_phase_pack_excerpt(self) -> None:
+    def test_render_templates_show_compact_market_status_only(self) -> None:
         r = _make_result()
         r.market_phase_summary = {
             "phase": "intraday",
@@ -178,11 +228,12 @@ class TestReportRenderer(unittest.TestCase):
         out = render("brief", [r])
 
         self.assertIsNotNone(out)
-        self.assertIn("阶段：intraday", out)
-        self.assertIn("盘中数据提示", out)
-        self.assertIn("数据质量: limited", out)
-        self.assertIn("限制: quote: stale", out)
-        self.assertIn("限制: news: missing", out)
+        self.assertIn("市场状态：A股 · 盘中", out)
+        self.assertNotIn("阶段：intraday", out)
+        self.assertNotIn("盘中数据提示", out)
+        self.assertNotIn("数据质量: limited", out)
+        self.assertNotIn("限制: quote: stale", out)
+        self.assertNotIn("限制: news: missing", out)
         self.assertNotIn("technical: fallback", out)
         self.assertNotIn("raw context pack", out)
 
@@ -194,6 +245,26 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertNotIn("摘要来源", out)
         self.assertNotIn("evaluator snapshot", out)
+
+    def test_render_market_status_preserves_input_order(self) -> None:
+        cn = _make_result(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=60,
+        )
+        cn.market_phase_summary = {"market": "cn", "phase": "postmarket"}
+        us = _make_result(
+            code="AAPL",
+            name="Apple",
+            sentiment_score=90,
+        )
+        us.market_phase_summary = {"market": "us", "phase": "premarket"}
+
+        out = render("markdown", [cn, us], summary_only=True)
+
+        self.assertIsNotNone(out)
+        self.assertIn("市场状态：A股 · 盘后", out)
+        self.assertNotIn("市场状态：美股 · 盘前", out)
 
     def test_render_markdown_footer_uses_consistent_separator(self) -> None:
         r = _make_result(model_used="gemini/gemini-2.5-flash")
